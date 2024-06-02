@@ -60,9 +60,9 @@ np.seterr(divide='ignore')
 ## GLOBAL VARIABLES ##
 SIZE = 172-14
 LEN = 4
-WRITE_TEMP_TIFS = False
-WRITE_RAW_TIFS = False
-WRITE_MONTHLY_TIFS = False
+WRITE_TEMP_TIFS = True
+WRITE_RAW_TIFS = True
+WRITE_MONTHLY_TIFS = True
 
 """ This is the main python script used to generate the tree cover data.
 The useage is as:

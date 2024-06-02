@@ -195,7 +195,7 @@ def adjust_dimensions(s220img, s240img):
     return img_40
 
 
-def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.5):
+def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.6):
     """ Downloads the L2A sentinel layer with 10 and 20 meter bands
 
         Parameters:
@@ -234,7 +234,7 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.5):
         
     csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
     s2 = s2.map(lambda img: img.addBands(csPlus.filter(ee.Filter.equals('system:index', img.get('system:index'))).first()))
-    
+    print("s2 size",s2.size().getInfo())
     
     s210 = s2.select(["B2", "B3", "B4", "B8"])
     s220 = s2.select(["B5", "B6", "B7", "B8A", "B11", "B12"])
@@ -387,22 +387,29 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     patch = get_patch(clouds, roi, 160)
 
     cloudImage = structured_to_unstructured(patch)
+    print(cloudImage)
 
     # Filter out arrays with -inf or nan values
     valid_indices = ~np.isnan(cloudImage).any(axis=(0, 1)) & ~np.isinf(cloudImage).any(axis=(0, 1))
+    
+    print("valid_indices",valid_indices)
     cloud_dates = np.array(cloud_dates)[valid_indices]
     filenames = np.array(filenames)[valid_indices]
     print("file names",filenames)
 
     cloudImage = cloudImage[:, :, valid_indices]
     cloudImage = np.transpose(cloudImage, (2, 0, 1))
+    print("---------------------------------------------------\n",cloudImage)
 
     mid_idx = cloudImage.shape[1] // 2
     mid_idx_y = cloudImage.shape[2] // 2
 
     # Apply the clear threshold
-    cloudImage[cloudImage < 0.6] = np.nan
-    cloudImage[cloudImage >= 0.6] = 0
+    cloudImage = 1-cloudImage
+    cloudImage[cloudImage < 0.4] = 0.01
+    #cloudImage[cloudImage >= 0.6] = 0
+    
+    print(cloudImage)
 
     cloud_percent = np.nanmean(cloudImage, axis=(1, 2))
     print("cloud percent",cloud_percent)
