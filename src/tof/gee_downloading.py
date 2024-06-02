@@ -401,8 +401,8 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     mid_idx_y = cloudImage.shape[2] // 2
 
     # Apply the clear threshold
-    cloudImage[cloudImage > 0.6] = np.nan
-    cloudImage[cloudImage <= 0.6] = 0
+    cloudImage[cloudImage < 0.6] = np.nan
+    cloudImage[cloudImage >= 0.6] = 0
 
     cloud_percent = np.nanmean(cloudImage, axis=(1, 2))
     print("cloud percent",cloud_percent)
