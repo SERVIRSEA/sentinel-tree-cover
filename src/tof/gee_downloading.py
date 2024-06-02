@@ -195,7 +195,7 @@ def adjust_dimensions(s220img, s240img):
     return img_40
 
 
-def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.6):
+def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     """ Downloads the L2A sentinel layer with 10 and 20 meter bands
 
         Parameters:
@@ -242,23 +242,57 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.6):
     
     nSteps  = int(s2.size().getInfo())
     
-    #print(ee.Image(s210.toBands()).bandNames().getInfo())
-
-
-
-
+    print(ee.Image(s210.toBands()).bandNames().getInfo())
     patchsize10 = 600
-    patch = get_patch(s210.toBands(), roi, patchsize10)    
-    s210img = structured_to_unstructured(patch)
+
+    
+    #patch = get_patch(s210.toBands(), roi, patchsize10)        
+    #s210img = structured_to_unstructured(patch)
+    #print("before shape",s210img.shape)
+    
+    
+    # need to split with more than 10 we hit limit
+    
+    # Define the bands for each request
+    bands_part1 = ["B2", "B3"]
+    bands_part2 = ["B4", "B8"]
+
+    # Select the bands for each part
+    s210_part1 = s2.select(bands_part1)
+    s210_part2 = s2.select(bands_part2)
+
+
+    # Get the patches for each part
+    patch_part1 = get_patch(s210_part1.toBands(), roi, patchsize10)
+    patch_part2 = get_patch(s210_part2.toBands(), roi, patchsize10)
+
+    # Convert the structured arrays to unstructured arrays
+    s210img_part1 = structured_to_unstructured(patch_part1)
+    s210img_part2 = structured_to_unstructured(patch_part2)
+    
     #print(s210img.shape)
     num_bands = 4
     new_shape = (nSteps, patchsize10, patchsize10, num_bands)
     result = np.empty(new_shape)
 
+    """
     # Loop through each time step and assign the corresponding bands
     for i in range(nSteps):
         for j in range(num_bands):
             result[i, :, :, j] = s210img[:, :, i * num_bands + j]
+    """
+    # Number of bands in each part
+    num_bands_part1 = 2
+    num_bands_part2 = 2
+    num_bands_total = num_bands_part1 + num_bands_part2
+    
+    # Loop through each time step and assign the corresponding bands
+    for i in range(nSteps):
+        for j in range(num_bands_part1):
+            result[i, :, :, j] = s210img_part1[:, :, i * num_bands_part1 + j]
+        for j in range(num_bands_part2):
+            result[i, :, :, num_bands_part1 + j] = s210img_part2[:, :, i * num_bands_part2 + j]
+    
     s210img = result / 10000
     #print("new shape =====================",s210img.shape)
     #s210img = s210img.reshape((patchsize10, patchsize10, 4, nSteps))
