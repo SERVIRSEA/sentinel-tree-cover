@@ -416,7 +416,9 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     
     # Apply cloud mask
     csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
-    s2 = s2.map(lambda img: img.addBands(csPlus.filter(ee.Filter.equals('system:index', img.get('system:index'))).first()))
+    #s2 = s2.map(lambda img: img.addBands(csPlus.filter(ee.Filter.equals('system:index', img.get('system:index'))).first()))
+    s2 = s2.linkCollection(csPlus, [QA_BAND])
+    print("size 3",s2.size().getInfo())
     clouds = ee.Image(s2.select([QA_BAND]).toBands())
     patch = get_patch(clouds, roi, 160)
 
