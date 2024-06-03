@@ -236,6 +236,7 @@ def write_tif(arr: np.ndarray,
 
     west, east = point[0], point[2]
     north, south = point[3], point[1]
+    print("west",west,"east",east,"north",north,"south",south)
     arr = arr.T.astype(np.uint8)
 
     transform = rasterio.transform.from_bounds(west=west,

@@ -211,10 +211,12 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     start_date, end_date = dates
     QA_BAND = 'cs_cdf'
 
+    """
     # Define the region of interest
     initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
-
+    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
+    print(cloud_bbx_expanded)
+    
     roi = ee.Geometry.Polygon([
         [
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
@@ -225,6 +227,11 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
         ]
     ])
 
+    """
+    print(cloud_bbx)
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
+    print("roi 1",roi.getInfo())
+        
     # Load Sentinel-2 image collection
     s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterDate(start_date, end_date) \
@@ -243,7 +250,7 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     nSteps  = int(s2.size().getInfo())
     
     print(ee.Image(s210.toBands()).bandNames().getInfo())
-    patchsize10 = 600
+    patchsize10 = 640
 
     
     #patch = get_patch(s210.toBands(), roi, patchsize10)        
@@ -300,7 +307,7 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     
     
     
-    patchsize20 = 300
+    patchsize20 = 320
     patch = get_patch(s220.toBands(), roi, patchsize20)    
     s220img = structured_to_unstructured(patch)
 
@@ -386,11 +393,14 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     """
     start_date, end_date = dates
     QA_BAND = 'cs_cdf'
-
+    
+    print("cloud bbx",cloud_bbx)
+    """
     # Define the region of interest
     initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
+    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
     print(cloud_bbx_expanded)
+    
     roi = ee.Geometry.Polygon([
         [
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
@@ -401,6 +411,24 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
         ]
     ])
 
+    """
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
+    
+        
+    # Get the bounding box coordinates
+    roi_info = roi.getInfo()
+    print("roi 2",roi.getInfo())
+
+
+    # Extract the coordinates from the ROI info
+    coordinates = roi_info['coordinates'][0]
+
+    # Format the coordinates into the desired bounding box format
+    bbx = [coordinates[0][0], coordinates[0][1], coordinates[2][0], coordinates[2][1]]
+
+    print(bbx)  # Should print: [103.41328417377323, 12.37677231655702, 103.46883972932878, 12.432327872112577]
+    
+    #exit()
     # Load Sentinel-2 image collection
     s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterDate(start_date, end_date) \
@@ -495,7 +523,7 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     assert np.max(cloudImage) <= 1, np.max(cloudImage)
     assert cloudImage.dtype == np.float32
 
-    return cloudImage, cloud_percent, np.array(cloud_dates), local_clouds, filenames
+    return cloudImage, cloud_percent, np.array(cloud_dates), local_clouds, filenames, bbx
 
 def generate_date_range(year):
     start_date = f'{year - 1}-11-15'
@@ -707,9 +735,15 @@ def get_mid_month_julian_days(year):
 def download_sentinel_1_composite(cloud_bbx, year):
 
     # Define the region of interest
-    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
+    #initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
+    #cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
 
+    """
+    # Define the region of interest
+    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
+    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
+    print(cloud_bbx_expanded)
+    
     roi = ee.Geometry.Polygon([
         [
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
@@ -719,6 +753,12 @@ def download_sentinel_1_composite(cloud_bbx, year):
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
         ]
     ])
+
+    """
+    
+    print(cloud_bbx)
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
+    print("roi 3",roi.getInfo())
 
     months = ee.List.sequence(1,12,1)
 	
@@ -736,17 +776,20 @@ def download_sentinel_1_composite(cloud_bbx, year):
     
     # Function to create a median composite for a given month
     def get_monthly_median(month):
-        start_month = ee.Date.fromYMD(year, month, 1)
-        end_month = start_month.advance(1, 'month')
+        start_month = ee.Date.fromYMD(year, month, 1).advance(-12,"days")
+        end_month = start_month.advance(1, 'month').advance(12,"days")
         monthly_composite = s1.filterDate(start_month, end_month).median()
         return monthly_composite.set('month', month)
 
     # Create monthly median composites
     monthly_composites = ee.ImageCollection(months.map(lambda m: get_monthly_median(ee.Number(m))).flatten())
     
-    patchsize = 300
+    print("monthly composites",monthly_composites.size().getInfo())
+    
+    patchsize = 320
     patch = get_patch(monthly_composites.toBands(), roi, patchsize)    
     s1img = structured_to_unstructured(patch)
+    print("shape",s1img.shape)
     
     num_bands = 2
     nSteps = 12
@@ -756,6 +799,7 @@ def download_sentinel_1_composite(cloud_bbx, year):
     # Loop through each time step and assign the corresponding bands
     for i in range(nSteps):
         for j in range(num_bands):
+            print(i,j)
             result[i, :, :, j] = s1img[:, :, i * num_bands + j]
     s1img = result.clip(0,1) 
     
@@ -782,7 +826,12 @@ def download_dem(cloud_bbx):
     # Define the region of interest
     initial_bbx = [cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
     cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
-
+    """
+    # Define the region of interest
+    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
+    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
+    print(cloud_bbx_expanded)
+    
     roi = ee.Geometry.Polygon([
         [
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
@@ -792,10 +841,14 @@ def download_dem(cloud_bbx):
             [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
         ]
     ])
+
+    """
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(642*10).bounds(1)
+    print("roi 4 ",roi.getInfo())
     
     dem = ee.Image("CGIAR/SRTM90_V4")
 	
-    patchsize = 202
+    patchsize = 214
     patch = get_patch(dem, roi, patchsize)    
     dem_image = structured_to_unstructured(patch).squeeze()
 

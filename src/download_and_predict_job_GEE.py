@@ -401,7 +401,7 @@ def download_raw_tile(tile_idx: tuple, local_path: str,
 def download_s1_tile_gee(bbox,year,s1_file,s1_dates_file):
     
     
-    s1, s1_dates = gee_downloading.download_sentinel_1_composite(bbx,  year)
+    s1, s1_dates = gee_downloading.download_sentinel_1_composite(bbox,  year)
     
     hkl.dump(to_int16(s1), s1_file, mode='w', compression='gzip')
     hkl.dump(s1_dates, s1_dates_file, mode='w', compression='gzip')
@@ -541,7 +541,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
         
 
         # Identify images with <30% cloud cover
-        cloud_probs, cloud_percent, all_dates, all_local_clouds, filenames = gee_downloading.identify_clouds_big_bbx(
+        cloud_probs, cloud_percent, all_dates, all_local_clouds, filenames, myBox = gee_downloading.identify_clouds_big_bbx(
             cloud_bbx = initial_bbx, 
             dates = dates,
             year = year
@@ -633,6 +633,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
         cloud_probs = hkl.load(clouds_file)
         clean_filenames = hkl.load(clean_filename)
         print("clean steps",clean_steps)
+        print("initial_bbx1",initial_bbx)
         s2_10, s2_20, clm,s2_dates = gee_downloading.download_sentinel_2_new(clean_filenames,initial_bbx,
                                                      dates = dates,
                                                      year = year, maxclouds = 1.0)
@@ -653,6 +654,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
 
             
     if not (os.path.exists(s1_file)) and len(clean_dates) > 2:
+        print("initial_bbx2",initial_bbx)
         
         download_s1_tile_gee(initial_bbx,year,s1_file,s1_dates_file)
         
@@ -668,11 +670,13 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
         """
     if not os.path.exists(dem_file) and len(clean_dates) > 2:
         print(f'Downloading DEM: {dem_file}')
+        print("initial_bbx3",initial_bbx)
         dem = gee_downloading.download_dem(initial_bbx)
         #dem = tof_downloading.download_dem(dem_bbx, api_key = api_key)
         hkl.dump(dem, dem_file, mode='w', compression='gzip')
+    print("myBox",myBox)
 
-    return bbx, len(clean_dates)
+    return myBox, len(clean_dates)
 
 #####################################################
 ################# ARD CREATION FNS ##################
@@ -705,6 +709,8 @@ def process_tile(x: int, y: int, data: pd.DataFrame,
     y = str(int(y))
     x = x[:-2] if ".0" in x else x
     y = y[:-2] if ".0" in y else y
+    
+    print("bbx",bbx)
             
     folder = f"{local_path}{str(x)}/{str(y)}/"
     tile_idx = f'{str(x)}X{str(y)}Y'
@@ -1933,7 +1939,9 @@ if __name__ == '__main__':
                         data2 = data2.reset_index(drop = True)
                         print(data2)
                       initial_bbx = [data2['X'][0], data2['Y'][0], data2['X'][0], data2['Y'][0]]
+                      print("initial_bbx",initial_bbx)
                       bbx = make_bbox(initial_bbx, expansion = 300/30)
+                      print("bbx",bbx)
                       expansion = 300
                       if args.make_training_data == True:
                             if np.logical_and(int(x) != 0, int(y) != 0):
