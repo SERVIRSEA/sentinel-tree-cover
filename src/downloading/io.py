@@ -224,7 +224,7 @@ def file_in_local_or_s3(file, key, apikey, apisecret, bucket):
     return exists
 
 
-def write_tif(arr: np.ndarray,
+def write_tif(crs,arr: np.ndarray,
               point: list,
               x: int,
               y: int,
@@ -236,7 +236,7 @@ def write_tif(arr: np.ndarray,
 
     west, east = point[0], point[2]
     north, south = point[3], point[1]
-    print("west",west,"east",east,"north",north,"south",south)
+    print("west",west,"east",east,"north",north,"south",south,crs)
     arr = arr.T.astype(np.uint8)
 
     transform = rasterio.transform.from_bounds(west=west,
@@ -255,7 +255,8 @@ def write_tif(arr: np.ndarray,
                                 count=1,
                                 dtype="uint8",
                                 compress='lzw',
-                                crs='+proj=longlat +datum=WGS84 +no_defs',
+                                #crs='+proj=longlat +datum=WGS84 +no_defs',
+                                crs=crs,
                                 transform=transform)
     new_dataset.write(arr, 1)
     new_dataset.close()

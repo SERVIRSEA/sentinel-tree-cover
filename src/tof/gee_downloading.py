@@ -1,4 +1,5 @@
 import ee
+import rasterio
 import datetime
 import numpy as np
 import copy
@@ -37,7 +38,7 @@ def ee_init() -> None:
     )
 
 @retry.Retry(deadline=10 * 60)  # seconds
-def get_patch(image, roi, patch_size) -> np.ndarray:
+def get_patch(image, roi, patch_size,scale,crs) -> np.ndarray:
     """Fetches a patch of pixels from Earth Engine.
     
     Args:
@@ -55,6 +56,9 @@ def get_patch(image, roi, patch_size) -> np.ndarray:
         {
             "region": roi,
             "dimensions": [patch_size, patch_size],
+            "crs":crs,
+            #"scale":scale,
+            #"crs_transform":[10,0,799980,0,-10,1600020],
             "format": "NPY",
         }
     )
@@ -193,9 +197,39 @@ def adjust_dimensions(s220img, s240img):
             img_40 = np.mean(img_40, axis=(2, 4))
 
     return img_40
+    
+    
+def write_to_tif(crs,arr,point):
+    fileName = "/home/ate-laptop/temp/s210c.tif"
+
+    west, east = point[0], point[2]
+    north, south = point[3], point[1]
+
+    transform = rasterio.transform.from_bounds(west=west,
+                                               south=south,
+                                               east=east,
+                                               north=north,
+                                               width=arr.shape[1],
+                                               height=arr.shape[0])
+    arr = to_int16(arr)
+    
+    new_dataset = rasterio.open(fileName,
+                                'w',
+                                driver='GTiff',
+                                height=arr.shape[0],
+                                width=arr.shape[1],
+                                count=arr.shape[-1],
+                                dtype="uint16",
+                                compress='zstd',
+                                crs=crs,
+                                transform=transform)
+    arr = np.rollaxis(arr, 2)
+    arr = np.flip(arr, axis = 0)
+    new_dataset.write(arr)
+    new_dataset.close()
 
 
-def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
+def download_sentinel_2_new(fnames,cloud_bbx, dates, year,crs, maxclouds=0.4):
     """ Downloads the L2A sentinel layer with 10 and 20 meter bands
 
         Parameters:
@@ -211,26 +245,9 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     start_date, end_date = dates
     QA_BAND = 'cs_cdf'
 
-    """
-    # Define the region of interest
-    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
-    print(cloud_bbx_expanded)
-    
-    roi = ee.Geometry.Polygon([
-        [
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
-        ]
-    ])
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs,0.001).buffer(320*10).bounds(0.0)
+    roi = roi.transform(crs,0.001)
 
-    """
-    print(cloud_bbx)
-    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
-    print("roi 1",roi.getInfo())
         
     # Load Sentinel-2 image collection
     s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
@@ -241,7 +258,6 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
         
     csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
     s2 = s2.map(lambda img: img.addBands(csPlus.filter(ee.Filter.equals('system:index', img.get('system:index'))).first()))
-    print("s2 size",s2.size().getInfo())
     
     s210 = s2.select(["B2", "B3", "B4", "B8"])
     s220 = s2.select(["B5", "B6", "B7", "B8A", "B11", "B12"])
@@ -249,14 +265,7 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
     
     nSteps  = int(s2.size().getInfo())
     
-    print(ee.Image(s210.toBands()).bandNames().getInfo())
     patchsize10 = 640
-
-    
-    #patch = get_patch(s210.toBands(), roi, patchsize10)        
-    #s210img = structured_to_unstructured(patch)
-    #print("before shape",s210img.shape)
-    
     
     # need to split with more than 10 we hit limit
     
@@ -270,24 +279,18 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
 
 
     # Get the patches for each part
-    patch_part1 = get_patch(s210_part1.toBands(), roi, patchsize10)
-    patch_part2 = get_patch(s210_part2.toBands(), roi, patchsize10)
+    patch_part1 = get_patch(s210_part1.toBands(), roi, patchsize10,10,crs)
+    patch_part2 = get_patch(s210_part2.toBands(), roi, patchsize10,10,crs)
 
     # Convert the structured arrays to unstructured arrays
     s210img_part1 = structured_to_unstructured(patch_part1)
     s210img_part2 = structured_to_unstructured(patch_part2)
     
-    #print(s210img.shape)
     num_bands = 4
     new_shape = (nSteps, patchsize10, patchsize10, num_bands)
     result = np.empty(new_shape)
 
-    """
-    # Loop through each time step and assign the corresponding bands
-    for i in range(nSteps):
-        for j in range(num_bands):
-            result[i, :, :, j] = s210img[:, :, i * num_bands + j]
-    """
+
     # Number of bands in each part
     num_bands_part1 = 2
     num_bands_part2 = 2
@@ -301,18 +304,13 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
             result[i, :, :, num_bands_part1 + j] = s210img_part2[:, :, i * num_bands_part2 + j]
     
     s210img = result / 10000
-    #print("new shape =====================",s210img.shape)
-    #s210img = s210img.reshape((patchsize10, patchsize10, 4, nSteps))
-    #s210img = s210img.transpose(3, 0, 1, 2) / 10000
-    
-    
+
     
     patchsize20 = 320
-    patch = get_patch(s220.toBands(), roi, patchsize20)    
+    patch = get_patch(s220.toBands(), roi, patchsize20,20,crs)    
     s220img = structured_to_unstructured(patch)
 
-    #s220img = s220img.reshape((patchsize20, patchsize20, 6, nSteps))
-    #s220img = s220img.transpose(3, 0, 1, 2) / 10000
+
     num_bands = 6
     new_shape = (nSteps, patchsize20, patchsize20, num_bands)
     result = np.empty(new_shape)
@@ -325,23 +323,20 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
 
 
 
-    patch = get_patch(s2cloud.toBands(), roi, patchsize20)    
+    patch = get_patch(s2cloud.toBands(), roi, patchsize20,20,crs)   
     s2cloud = structured_to_unstructured(patch)
-    #print("s2clouds:",s2cloud.shape)
+
     s2cloud = s2cloud.reshape((patchsize20, patchsize20, 1, nSteps))
     s2cloud = s2cloud.transpose(3, 0, 1, 2)
     s2cloud = np.where(s2cloud > maxclouds, 0, 1)
     
     # Downsample to 40m
     s240img = downsample_to_40m(s220img, nSteps)
-    #print("Shape of 40m bands before adjustment:", s240img.shape)
 
     # Adjust dimensions to match 20m bands
     s240img = adjust_dimensions(s220img, s240img)
-    #print("Shape of 40m bands after adjustment:", s240img.shape)
 	
     s220img = np.concatenate([s220img, s240img], axis=-1)
-    #print("Shape of 40m bands after adjustment:", s220img.shape)
 
     # Convert 10m bands to np.float32, ensure correct dimensions
     if not isinstance(s210img.flat[0], np.floating):
@@ -350,32 +345,61 @@ def download_sentinel_2_new(fnames,cloud_bbx, dates, year, maxclouds=0.4):
         assert np.max(s210img) <= 1
         assert s210img.dtype == np.float32
 
-    #print(s210img)
+
     # Convert 10m bands to np.float32, ensure correct dimensions
     if not isinstance(s220img.flat[0], np.floating):
         assert np.max(s220img) > 1
         s220img = np.float32(s220img) / 65535.
         assert np.max(s220img) <= 1
         assert s220img.dtype == np.float32
-    #print(np.max(s210img))
+
     
     s210img = np.clip(s210img, 0, 1)
     s220img = np.clip(s220img, 0, 1)
-    
-    """
-    first_timestep_data = s210img[1,:,:] 
-    plt.figure(figsize=(10, 8))
-    plt.imshow(first_timestep_data[:,:,0:3], cmap='gray')
-    #plt.imshow(first_timestep_data, cmap='gray')
-    plt.colorbar()
-    plt.show()
-    """
 
     return s210img, s220img, s2cloud, dates
     
 
 
-def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
+def getCRS(cloud_bbx):
+	
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(320*10).bounds(0.0)
+    s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterBounds(roi)
+    img = ee.Image(s2.first())
+    crs = img.select("B1").projection().crs().getInfo()
+    
+    return crs
+	
+def testGeom():
+	# Load Sentinel-2 image collection
+    s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
+        .filterDate(start_date, end_date) \
+        .filterBounds(roi) \
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))\
+        
+
+    s210 = s2.select(["B2", "B3", "B4"])
+    
+
+    patchsize10 = 640
+    transform = ee.Image(s210.first()).select("B2").projection().transform().getInfo()
+    print(transform)
+    print(ee.Image(s210.first()).get("system:index").getInfo())
+    
+    # Get the patches for each part
+    transform = [10,0,600000,0,-10,1500000]
+    patch_part1 = get_patch(ee.Image(s210.first()), roi, patchsize10,10,crs,transform)
+    
+    
+    s210img = structured_to_unstructured(patch_part1) / 10000
+    
+    
+
+    print("result",s210img.shape)
+    write_to_tif(crs,s210img,bbx)
+
+
+def identify_clouds_big_bbx(cloud_bbx, dates, year,crs, maxclouds=0.5):
     """
     Downloads and calculates cloud cover and shadow
 
@@ -394,48 +418,32 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     start_date, end_date = dates
     QA_BAND = 'cs_cdf'
     
-    print("cloud bbx",cloud_bbx)
-    """
-    # Define the region of interest
-    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
-    print(cloud_bbx_expanded)
-    
-    roi = ee.Geometry.Polygon([
-        [
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
-        ]
-    ])
+    #roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]])
+    #print("before", roi.buffer(640*10).bounds(0.0).getInfo()) 
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs,0.001)
+    roi = roi.buffer(320*10).bounds().transform(crs,0.001)
+    #roi = roi
 
-    """
-    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
-    
-        
     # Get the bounding box coordinates
     roi_info = roi.getInfo()
-    print("roi 2",roi.getInfo())
 
+    # Extract the coordinates
+    coords = np.array(roi_info['coordinates'][0])
 
-    # Extract the coordinates from the ROI info
-    coordinates = roi_info['coordinates'][0]
+    # Calculate the bounding box
+    min_x, min_y = coords.min(axis=0)
+    max_x, max_y = coords.max(axis=0)
 
     # Format the coordinates into the desired bounding box format
-    bbx = [coordinates[0][0], coordinates[0][1], coordinates[2][0], coordinates[2][1]]
+    bbx = [min_x, min_y, max_x, max_y]
+  
 
-    print(bbx)  # Should print: [103.41328417377323, 12.37677231655702, 103.46883972932878, 12.432327872112577]
-    
-    #exit()
     # Load Sentinel-2 image collection
     s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
         .filterDate(start_date, end_date) \
         .filterBounds(roi) \
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', maxclouds * 100))
 
-    print("size",s2.size().getInfo())
     # Extract dates of the images
     cloud_dates, filenames = extract_dates(s2)
 
@@ -446,24 +454,21 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
     #s2 = s2.map(lambda img: img.addBands(csPlus.filter(ee.Filter.equals('system:index', img.get('system:index'))).first()))
     s2 = s2.linkCollection(csPlus, [QA_BAND])
-    print("size 3",s2.size().getInfo())
+
     clouds = ee.Image(s2.select([QA_BAND]).toBands())
-    patch = get_patch(clouds, roi, 160)
+    patch = get_patch(clouds, roi, 160,160,crs)
 
     cloudImage = structured_to_unstructured(patch)
-    print(cloudImage)
 
     # Filter out arrays with -inf or nan values
     valid_indices = ~np.isnan(cloudImage).any(axis=(0, 1)) & ~np.isinf(cloudImage).any(axis=(0, 1))
     
-    print("valid_indices",valid_indices)
+
     cloud_dates = np.array(cloud_dates)[valid_indices]
     filenames = np.array(filenames)[valid_indices]
-    print("file names",filenames)
 
     cloudImage = cloudImage[:, :, valid_indices]
     cloudImage = np.transpose(cloudImage, (2, 0, 1))
-    print("---------------------------------------------------\n",cloudImage)
 
     mid_idx = cloudImage.shape[1] // 2
     mid_idx_y = cloudImage.shape[2] // 2
@@ -473,10 +478,7 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     cloudImage[cloudImage < 0.4] = 0.01
     #cloudImage[cloudImage >= 0.6] = 0
     
-    print(cloudImage)
-
     cloud_percent = np.nanmean(cloudImage, axis=(1, 2))
-    print("cloud percent",cloud_percent)
 
     local_clouds = np.copy(cloudImage[:, mid_idx - 15:mid_idx + 15, mid_idx_y - 15:mid_idx_y + 15])
     for i in range(cloudImage.shape[0]):
@@ -494,8 +496,6 @@ def identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds=0.5):
     filenames = np.delete(filenames, cloud_steps)
     local_clouds = np.delete(local_clouds, cloud_steps)
 
-    print("steps",cloud_steps)
-    print("dates",cloud_dates)
 
     cloud_percent[cloud_percent > 0.4] = ((0.25 * cloud_percent[cloud_percent > 0.4] +
                                            0.75 * local_clouds[cloud_percent > 0.4]))
@@ -535,87 +535,6 @@ def convert_to_day_of_year(dates, base_date):
     day_of_year = [(datetime.datetime.strptime(date, '%Y-%m-%d') - base_date).days for date in dates]
     return np.array(day_of_year)
 
-
-"""
-def process_cloud_data(cloud_bbx, dates, year, maxclouds=0.5):
-    cloud_probs, cloud_percent, all_dates, all_local_clouds, filenames = identify_clouds_big_bbx(cloud_bbx, dates, year, maxclouds)
-
-    print("final cloud image\n", cloud_probs)
-    print("final cloud percent\n", cloud_percent)
-    print("final local clouds\n", all_local_clouds)
-    print("final doy\n", all_dates)
-    print("filenames\n", filenames)
-
-    cloud_probs = cloud_probs * 100
-    cloud_probs[cloud_probs > 100] = np.nan
-    cloud_percent = np.nanmean(cloud_probs, axis=(1, 2))
-    cloud_percent = cloud_percent / 100
-
-    print("cloud percent\n\n", cloud_percent)
-
-    local_clouds = np.copy(all_local_clouds)
-    image_dates = np.copy(all_dates)
-    image_names = np.copy(filenames)
-    print("dates\n\n", image_dates)
-
-    to_remove = cloud_removal.subset_contiguous_sunny_dates(image_dates, cloud_percent)
-    print("to remove\n\n", to_remove)
-
-    if len(to_remove) > 0:
-        clean_dates = np.delete(image_dates, to_remove)
-        clean_filenames = np.delete(filenames, to_remove)
-        cloud_probs = np.delete(cloud_probs, to_remove, 0)
-        cloud_percent = np.delete(cloud_percent, to_remove)
-        local_clouds = np.delete(local_clouds, to_remove)
-    else:
-        clean_dates = image_dates
-        clean_filenames = filenames
-
-    if len(clean_dates) >= 11:
-        clean_dates = np.delete(clean_dates, 5)
-        clean_filenames = np.delete(clean_filenames, 5)
-        cloud_probs = np.delete(cloud_probs, 5, 0)
-        cloud_percent = np.delete(cloud_percent, 5)
-        local_clouds = np.delete(local_clouds, 5)
-
-        _ = cloud_removal.print_dates(clean_dates, cloud_percent)
-
-
-    lowest_three_local = np.argpartition(all_local_clouds, 3)[:3]
-    lowest_four_local = np.argpartition(all_local_clouds, 4)[:4]
-
-    criteria1 = (np.sum((local_clouds <= 0.3)) < 3)
-    criteria2 = (np.sum((local_clouds <= 0.4)) < 4)
-    criteria3 = len(local_clouds) <= 8
-    criteria2 = np.logical_or(criteria2, criteria3)
-
-    if criteria1 or criteria2:
-        if len(clean_dates) <= 9:
-            lowest = lowest_four_local if criteria2 else lowest_three_local
-            lowest_dates = image_dates[lowest]
-            lowest_filenames = filenames[lowest]
-            existing_imgs_in_local = [x for x in clean_dates if x in image_dates[lowest]]
-            images_to_add = [x for x in lowest_dates if x not in clean_dates]
-            filenames_to_add = [x for x in lowest_filenames if x not in clean_filenames]
-            print(f"Adding these images: {images_to_add}")
-            clean_dates = np.concatenate([clean_dates, images_to_add])
-            clean_filenames = np.concatenate([clean_filenames, filenames_to_add])
-            clean_dates = np.sort(clean_dates)
-        if len(clean_dates) <= 9:
-            imgs_to_add = 9 - len(clean_dates)
-            lowest_five_local = np.argpartition(all_local_clouds, 5)[:5]
-            images_to_add = [x for x in image_dates[lowest_five_local] if x not in clean_dates][:imgs_to_add]
-            filenames_to_add = [x for x in filenames[lowest_five_local] if x not in clean_filenames][:imgs_to_add]
-            clean_dates = np.concatenate([clean_dates, images_to_add])
-            clean_filenames = np.concatenate([clean_filenames, filenames_to_add])
-            clean_dates = np.sort(clean_dates)
-
-        for i, x, y in zip(clean_dates, cloud_percent, local_clouds):
-            print(i, x, y)
-
-
-    return cloud_probs, clean_dates, clean_filenames
-"""
 
 def toNatural(img):
   """Function to convert from dB to natural"""
@@ -732,33 +651,15 @@ def get_mid_month_julian_days(year):
         mid_month_days.append(julian_day)
     return mid_month_days
 
-def download_sentinel_1_composite(cloud_bbx, year):
+def download_sentinel_1_composite(cloud_bbx, year,crs):
 
     # Define the region of interest
     #initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
     #cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
 
-    """
-    # Define the region of interest
-    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
-    print(cloud_bbx_expanded)
-    
-    roi = ee.Geometry.Polygon([
-        [
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
-        ]
-    ])
 
-    """
-    
-    print(cloud_bbx)
-    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(640*10).bounds(1)
-    print("roi 3",roi.getInfo())
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs,0.001)
+    roi = roi.buffer(320*10).bounds().transform(crs,0.001)
 
     months = ee.List.sequence(1,12,1)
 	
@@ -782,15 +683,12 @@ def download_sentinel_1_composite(cloud_bbx, year):
         return monthly_composite.set('month', month)
 
     # Create monthly median composites
-    monthly_composites = ee.ImageCollection(months.map(lambda m: get_monthly_median(ee.Number(m))).flatten())
-    
-    print("monthly composites",monthly_composites.size().getInfo())
+    monthly_composites = ee.ImageCollection(months.map(lambda m: get_monthly_median(ee.Number(m))).flatten())   
     
     patchsize = 320
-    patch = get_patch(monthly_composites.toBands(), roi, patchsize)    
+    patch = get_patch(monthly_composites.toBands(), roi, patchsize,20,crs)
     s1img = structured_to_unstructured(patch)
-    print("shape",s1img.shape)
-    
+
     num_bands = 2
     nSteps = 12
     new_shape = (nSteps, patchsize, patchsize, num_bands)
@@ -799,8 +697,8 @@ def download_sentinel_1_composite(cloud_bbx, year):
     # Loop through each time step and assign the corresponding bands
     for i in range(nSteps):
         for j in range(num_bands):
-            print(i,j)
             result[i, :, :, j] = s1img[:, :, i * num_bands + j]
+    
     s1img = result.clip(0,1) 
     
     s1img  = s1img.repeat(2, axis=1).repeat(2, axis=2)
@@ -810,10 +708,9 @@ def download_sentinel_1_composite(cloud_bbx, year):
     s1img = process_sentinel_1_tile(s1img, dates)
 
     return s1img, dates
-    #print(monthly_composites.size().getInfo())
 
 
-def download_dem(cloud_bbx):
+def download_dem(cloud_bbx,crs):
     """ Downloads the DEM layer from Sentinel hub
 
         Parameters:
@@ -826,30 +723,15 @@ def download_dem(cloud_bbx):
     # Define the region of interest
     initial_bbx = [cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
     cloud_bbx_expanded = make_bbox(initial_bbx, expansion=300 / 30)
-    """
-    # Define the region of interest
-    initial_bbx = cloud_bbx #[cloud_bbx[0], cloud_bbx[1], cloud_bbx[0], cloud_bbx[1]]
-    cloud_bbx_expanded =  make_bbox(initial_bbx, expansion=300 / 30)
-    print(cloud_bbx_expanded)
-    
-    roi = ee.Geometry.Polygon([
-        [
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[1]],
-            [cloud_bbx_expanded[2], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[3]],
-            [cloud_bbx_expanded[0], cloud_bbx_expanded[1]]
-        ]
-    ])
 
-    """
-    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).buffer(642*10).bounds(1)
-    print("roi 4 ",roi.getInfo())
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs,0.001)
+    roi = roi.buffer(320*10).bounds().transform(crs,0.001)
+
     
     dem = ee.Image("CGIAR/SRTM90_V4")
 	
     patchsize = 214
-    patch = get_patch(dem, roi, patchsize)    
+    patch = get_patch(dem, roi, patchsize,30,crs) 
     dem_image = structured_to_unstructured(patch).squeeze()
 
 
@@ -875,66 +757,3 @@ def download_dem(cloud_bbx):
 
     return dem_image
 
-"""
-
-# Example usage
-year = 2023
-dates = generate_date_range(year)
-cloud_bbx = [94.53938593874919,20.702644427517065]  # Define your bounding box coordinates
-maxclouds = 0.7
-
-
-fpath = "/home/ate-laptop/sig/treecover/sentinel_original/sentinel-tree-cover/project-monitoring/tiles/2022/1/1/"
-
-clouds_file = fpath + "raw/clouds/clouds_1X1Y.hkl"
-clean_steps_file = fpath + "raw/clouds/clean_steps_1X1Y.hkl"
-clean_filename = fpath + "raw/clouds/clean_fname_1X1Y.hkl"
-
-
-#if os.path.exists(clouds_file) and os.path.exists(clean_steps_file):
-#    cloud_probs = hkl.load(clouds_file)
-#    clean_dates = hkl.load(clean_steps_file)
-#    clean_filenames = np.array(hkl.load(clean_filename))
-#    print(f"Loaded data from {clouds_file} and {clean_steps_file}.")
-#else:
-cloud_probs, clean_dates, clean_filenames = process_cloud_data(cloud_bbx, dates, year, maxclouds)
-
-hkl.dump(cloud_probs, clouds_file, mode='w', compression='gzip')
-hkl.dump(clean_dates, clean_steps_file, mode='w', compression='gzip')
-hkl.dump(clean_filenames, clean_filename, mode='w', compression='gzip')
-# print(f"Downloading {len(clean_dates)} of {len(clean_dates)} total steps")
-
-s2_10_file = fpath + "raw/s2_10/1X1Y.hkl"
-s2_20_file = fpath + "raw/s2_20/1X1Y.hkl"
-cloud_mask_file = fpath + "raw/clouds/cloudmask_1X1Y.hkl"
-s2_dates_file = fpath + "raw/misc/s2_dates_1X1Y.hkl"
-
-
-#if os.path.exists(s2_10_file) and os.path.exists(s2_20_file) and os.path.exists(cloud_mask_file):
-#    s2_10 = hkl.load(s2_10_file)
-#    s2_20 = hkl.load(s2_20_file)
-#    clm = hkl.load(cloud_mask_file)
-
-#else:
-s2_10, s2_20, clm,s2_dates  = download_sentinel_2_new(clean_filenames,cloud_bbx, dates, year, maxclouds)
-
-hkl.dump(to_int16(s2_10), s2_10_file, mode='w', compression='gzip')
-hkl.dump(to_int16(s2_20), s2_20_file, mode='w', compression='gzip')
-hkl.dump(clm, cloud_mask_file, mode='w', compression='gzip')
-hkl.dump(clean_dates, s2_dates_file, mode='w', compression='gzip')
-
-
-s1_file = fpath +"raw/s1/1X1Y.hkl"
-s1_dates_file = fpath +"raw/misc/s1_dates_1X1Y.hkl"
-
-#if os.path.exists(s1_file):
-#s1 = hkl.load(s1_file)
-#else:
-s1, s1_dates = download_sentinel_1_composite(cloud_bbx,  year)
-hkl.dump(to_int16(s1), s1_file, mode='w', compression='gzip')
-hkl.dump(s1_dates, s1_dates_file, mode='w', compression='gzip')
-
-dem_file = fpath +"raw/misc/dem_1X1Y.hkl"
-dem = download_dem(cloud_bbx)
-hkl.dump(dem, dem_file, mode='w', compression='gzip')
-"""

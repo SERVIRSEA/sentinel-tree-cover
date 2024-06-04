@@ -181,7 +181,7 @@ def float_to_int16(arr, precision = 1000):
     return arr
 
 
-def write_train_to_tif(arr: np.ndarray,
+def write_train_to_tif(crs,arr: np.ndarray,
               point: list,
               name,
               out_folder: str,
@@ -209,7 +209,8 @@ def write_train_to_tif(arr: np.ndarray,
                                 dtype="uint16",
                                 compress='zstd',
                                 predictor=2,
-                                crs='+proj=longlat +datum=WGS84 +no_defs',
+                                #crs='+proj=longlat +datum=WGS84 +no_defs',
+                                crs='EPSG:32648',
                                 transform=transform)
     arr = np.rollaxis(arr, 2)
     arr = np.flip(arr, axis = 0)
@@ -221,6 +222,7 @@ def write_train_to_tif(arr: np.ndarray,
 def write_ard_to_tif(arr: np.ndarray,
               point: list,
               name,
+              crs,
               out_folder: str,
               suffix="_FINAL") -> str:
 
@@ -249,7 +251,8 @@ def write_ard_to_tif(arr: np.ndarray,
                                 dtype="uint8",
                                 compress='zstd',
                                 predictor=2,
-                                crs='+proj=longlat +datum=WGS84 +no_defs',
+                                #crs='+proj=longlat +datum=WGS84 +no_defs',
+                                crs=crs,
                                 transform=transform)
     arr = np.rollaxis(arr, 2)
     arr = np.flip(arr, axis = 0)
@@ -398,10 +401,10 @@ def download_raw_tile(tile_idx: tuple, local_path: str,
 
 
 
-def download_s1_tile_gee(bbox,year,s1_file,s1_dates_file):
+def download_s1_tile_gee(bbox,year,s1_file,s1_dates_file,crs):
     
     
-    s1, s1_dates = gee_downloading.download_sentinel_1_composite(bbox,  year)
+    s1, s1_dates = gee_downloading.download_sentinel_1_composite(bbox,  year,crs = crs)
     
     hkl.dump(to_int16(s1), s1_file, mode='w', compression='gzip')
     hkl.dump(s1_dates, s1_dates_file, mode='w', compression='gzip')
@@ -514,6 +517,10 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
     bbx = make_bbox(initial_bbx, expansion = expansion/30)
     dem_bbx = make_bbox(initial_bbx, expansion = (expansion + 1)/30)
     print(f"The tile bbx is {initial_bbx}")
+    
+    crs = gee_downloading.getCRS(initial_bbx)
+    crs = "EPSG:4326"
+    print("the crs is",crs)
 
     folder = f"{args.local_path}/{str(x)}/{str(y)}/"
     tile_idx = f'{str(x)}X{str(y)}Y'
@@ -544,14 +551,10 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
         cloud_probs, cloud_percent, all_dates, all_local_clouds, filenames, myBox = gee_downloading.identify_clouds_big_bbx(
             cloud_bbx = initial_bbx, 
             dates = dates,
+            crs = crs,
             year = year
         )
                 
-        #print("cloud probs",cloud_probs.shape)
-        #print("cloud percent",cloud_percent)
-        #print("dates",all_dates)
-        #print("filenames",filenames)
-
         cloud_probs = cloud_probs * 100
         cloud_probs[cloud_probs > 100] = np.nan
         cloud_percent = np.nanmean(cloud_probs, axis = (1, 2))
@@ -636,7 +639,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
         print("initial_bbx1",initial_bbx)
         s2_10, s2_20, clm,s2_dates = gee_downloading.download_sentinel_2_new(clean_filenames,initial_bbx,
                                                      dates = dates,
-                                                     year = year, maxclouds = 1.0)
+                                                     year = year,crs = crs, maxclouds = 1.0)
 
         # Ensure that L2A, L1C derived products have exact matching dates
         # As sometimes the L1C data has more dates than L2A if processing bug from provider
@@ -656,7 +659,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
     if not (os.path.exists(s1_file)) and len(clean_dates) > 2:
         print("initial_bbx2",initial_bbx)
         
-        download_s1_tile_gee(initial_bbx,year,s1_file,s1_dates_file)
+        download_s1_tile_gee(initial_bbx,year,s1_file,s1_dates_file,crs)
         
         """
         download_s1_tile(data = data, 
@@ -671,12 +674,12 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
     if not os.path.exists(dem_file) and len(clean_dates) > 2:
         print(f'Downloading DEM: {dem_file}')
         print("initial_bbx3",initial_bbx)
-        dem = gee_downloading.download_dem(initial_bbx)
+        dem = gee_downloading.download_dem(initial_bbx,crs = crs)
         #dem = tof_downloading.download_dem(dem_bbx, api_key = api_key)
         hkl.dump(dem, dem_file, mode='w', compression='gzip')
     print("myBox",myBox)
 
-    return myBox, len(clean_dates)
+    return myBox, len(clean_dates), crs
 
 #####################################################
 ################# ARD CREATION FNS ##################
@@ -978,7 +981,7 @@ def process_tile(x: int, y: int, data: pd.DataFrame,
         if WRITE_RAW_TIFS:
             for i in range(sentinel2.shape[0]):
                 write_ard_to_tif(sentinel2[i, ..., :3], bbx,
-                                f"{str(x)}{str(y)}/{str(x)}X{str(y)}Y_{str(i)}_RAW", "")
+                                f"{str(x)}{str(y)}/{str(x)}X{str(y)}Y_{str(i)}_RAW",crs, "")
         _, interp, to_remove = cloud_removal.remove_cloud_and_shadows(
                 sentinel2, cloudshad, cloudshad, image_dates,
                  pfcps = fcps, 
@@ -1213,7 +1216,7 @@ def process_subtiles(x: int, y: int, s2: np.ndarray = None,
     if WRITE_MONTHLY_TIFS:
         for i in range(s2.shape[0]):
             write_ard_to_tif(s2[i, ..., :3], bbx,
-                             f"{str(x)}{str(y)}/{str(x)}X{str(y)}Y_{str(i)}", "")
+                             f"{str(x)}{str(y)}/{str(x)}X{str(y)}Y_{str(i)}",crs, "")
 
     s2, dates, interp = smooth_large_tile(s2, dates, interp)
     s2_median = s2_median[np.newaxis]
@@ -1222,7 +1225,7 @@ def process_subtiles(x: int, y: int, s2: np.ndarray = None,
     #s2_median = np.median(s2, axis = 0)[np.newaxis].astype(np.float32)
 
     fname = f"{str(x)}X{str(y)}Y{str(year)}"
-    write_ard_to_tif(np.mean(s2[..., :3], axis = 0), bbx, fname, "")
+    write_ard_to_tif(np.mean(s2[..., :3], axis = 0), bbx, fname,crs, "")
     key = f'{str(year)}/composite/{x}/{y}/{str(x)}X{str(y)}Y.tif'
     #uploader.upload(bucket = args.s3_bucket, key = key, file = fname + ".tif")
     dem_train = dem[np.newaxis, ..., np.newaxis]
@@ -1304,6 +1307,7 @@ def process_subtiles(x: int, y: int, s2: np.ndarray = None,
         write_ard_to_tif(np.median(train_sample, axis = 0)[..., :3],
               train_bbx,
               f"{str(PLOTID)}",
+              crs,
               "train-ard/", "")
         train_sample = to_int16(train_sample)
         if not os.path.exists(os.path.realpath("train-ard")):
@@ -1963,7 +1967,7 @@ if __name__ == '__main__':
                   print(args.redownload, type(args.redownload))
                   if (args.redownload == False) or not processed:
                       time1 = time.time()
-                      bbx, n_images = download_tile(x = x,
+                      bbx, n_images, crs = download_tile(x = x,
                                                     y = y, 
                                                     data = data, 
                                                     year = args.year,
@@ -2078,7 +2082,7 @@ if __name__ == '__main__':
                             #key = f'train-ard-y/{str(PLOTID)}.npy'
                             #uploader.upload(bucket = args.s3_bucket, key = key, file = outname)
                      
-                          file = write_tif(predictions, bbx, x, y, path_to_tile)
+                          file = write_tif(crs,predictions, bbx, x, y, path_to_tile)
                           key = f'{str(year)}/tiles/{x}/{y}/{str(x)}X{str(y)}Y_FINAL.tif'
                           #uploader.upload(bucket = args.s3_bucket, key = key, file = file)
 
