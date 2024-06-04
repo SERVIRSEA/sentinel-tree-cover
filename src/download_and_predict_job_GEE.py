@@ -519,7 +519,7 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
     print(f"The tile bbx is {initial_bbx}")
     
     crs = gee_downloading.getCRS(initial_bbx)
-    crs = "EPSG:4326"
+
     print("the crs is",crs)
 
     folder = f"{args.local_path}/{str(x)}/{str(y)}/"
