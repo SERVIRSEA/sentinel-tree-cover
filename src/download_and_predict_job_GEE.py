@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
 from random import shuffle
-from sentinelhub import WmsRequest, WcsRequest, MimeType, CRS, BBox, constants
-from sentinelhub.config import SHConfig
 import logging
 import datetime
 import os
@@ -11,7 +9,7 @@ from tqdm import tqdm
 import scipy.sparse as sparse
 from scipy.sparse.linalg import splu
 from skimage.transform import resize
-from sentinelhub import CustomUrlParam
+
 import math
 import reverse_geocoder as rg
 import pycountry
@@ -60,9 +58,9 @@ np.seterr(divide='ignore')
 ## GLOBAL VARIABLES ##
 SIZE = 172-14
 LEN = 4
-WRITE_TEMP_TIFS = True
-WRITE_RAW_TIFS = True
-WRITE_MONTHLY_TIFS = True
+WRITE_TEMP_TIFS = False
+WRITE_RAW_TIFS = False
+WRITE_MONTHLY_TIFS = False
 
 """ This is the main python script used to generate the tree cover data.
 The useage is as:
@@ -541,6 +539,9 @@ def download_tile(x: int, y: int, data: pd.DataFrame, year, initial_bbx, expansi
     dem_file = f'{folder}raw/misc/dem_{tile_idx}.hkl'
 
     dates = generate_date_range(year)
+    
+    if (os.path.exists(clouds_file)):
+        myBox = gee_downloading.get_bbx(cloud_bbx = initial_bbx,crs = crs)
 
     if not (os.path.exists(clouds_file)):
         print(f"Downloading {clouds_file}")
@@ -1732,7 +1733,7 @@ if __name__ == '__main__':
         default = '../models-release/supres-40k-swir/'
     )
     parser.add_argument(
-        "--db_path", dest = "db_path", default = "../process_area_2022.csv"
+        "--db_path", dest = "db_path", default = "../asia-tilegrid.csv"
     )
     parser.add_argument("--ul_flag", dest = "ul_flag", default = False, type=str2bool, nargs='?',
                         const=True)
@@ -1890,6 +1891,8 @@ if __name__ == '__main__':
         data = data.reset_index(drop = True)
         x = str(int(x))
         y = str(int(y))
+    # reverse order
+    data = data.iloc[::-1].reset_index(drop=True)     
     for index, row in data.iterrows():
         if np.logical_and(index >= int(args.start), index < int(args.end)):
             x = str(int(row['X_tile']))
@@ -1898,19 +1901,22 @@ if __name__ == '__main__':
             if args.make_training_data == True:
                 PX_x = row['X_px']
                 PX_y = row['Y_px']
-                print(f"Training plot centroid: {PX_x, PX_y}")
+                
                 PLOTID = str(row['plot_id'])
-                print(PLOTID)
+                
                 #to_process = True if int(x) > 0 else False
+
 
             x = x[:-2] if ".0" in x else x
             y = y[:-2] if ".0" in y else y
+
             bbx = None
             year = args.year
             dates = (f'{str(args.year - 1)}-11-15' , f'{str(args.year + 1)}-02-15')
             dates_sentinel_1 = (f'{str(args.year)}-01-01' , f'{str(args.year)}-12-31')
             days_per_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30]
             starting_days = np.cumsum(days_per_month)
+
 
             # Check to see whether the tile exists locally or on s3
             path_to_tile = f'{args.local_path}/{str(x)}/{str(y)}/'
@@ -1965,6 +1971,16 @@ if __name__ == '__main__':
                       print("The latitude is", lat)
                   time0 = time.time()
                   print(args.redownload, type(args.redownload))
+            
+                  outputdir = "/media/ate/2ca0e8f5-dc27-455a-8bac-b4bdefb367a7/tcc/2022/output/"
+                  suffix = "_FINAL"
+                  ofile = outputdir + f"{str(x)}X{str(y)}Y{suffix}.tif"
+                  print(ofile)
+                  # Check if file exists and skip if it does
+                  if os.path.exists(ofile):
+                      print(f"File {ofile} already exists. Skipping...")
+                      continue        
+                  
                   if (args.redownload == False) or not processed:
                       time1 = time.time()
                       bbx, n_images, crs = download_tile(x = x,
@@ -2081,9 +2097,13 @@ if __name__ == '__main__':
                             #np.save(f"train-ard-y/{str(PLOTID)}.npy", y_train*2.5)
                             #key = f'train-ard-y/{str(PLOTID)}.npy'
                             #uploader.upload(bucket = args.s3_bucket, key = key, file = outname)
-                     
+                          print("xy",x,y)
+                          
                           file = write_tif(crs,predictions, bbx, x, y, path_to_tile)
+                          outputdir = "/media/ate/2ca0e8f5-dc27-455a-8bac-b4bdefb367a7/tcc/2022/output/"
+                          file = write_tif(crs,predictions, bbx, x, y, outputdir)
                           key = f'{str(year)}/tiles/{x}/{y}/{str(x)}X{str(y)}Y_FINAL.tif'
+
                           #uploader.upload(bucket = args.s3_bucket, key = key, file = file)
 
                           

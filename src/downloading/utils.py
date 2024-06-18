@@ -10,8 +10,8 @@ import yaml
 from collections import Counter
 from random import shuffle
 from scipy.sparse.linalg import splu
-from sentinelhub import WmsRequest, WcsRequest, MimeType
-from sentinelhub import CRS, BBox, constants, CustomUrlParam
+#from sentinelhub import WmsRequest, WcsRequest, MimeType
+#from sentinelhub import CRS, BBox, constants, CustomUrlParam
 from skimage.transform import resize
 from pyproj import Proj, transform
 from typing import List, Any, Tuple

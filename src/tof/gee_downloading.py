@@ -398,6 +398,37 @@ def testGeom():
     print("result",s210img.shape)
     write_to_tif(crs,s210img,bbx)
 
+def get_bbx(cloud_bbx, crs):
+    """
+    Calculates the bounding box coordinates transformed to the specified CRS.
+
+    Parameters:
+    cloud_bbx (list): Bounding box coordinates [minLng, minLat]
+    crs (str): Coordinate reference system
+
+    Returns:
+    bbx (list): Bounding box coordinates [min_x, min_y, max_x, max_y]
+    """
+    
+    # Define the region of interest (ROI) and transform its coordinates
+    roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs, 0.001)
+    roi = roi.buffer(3200).bounds().transform(crs, 0.001)
+    
+    # Get the bounding box coordinates
+    roi_info = roi.getInfo()
+    
+    # Extract the coordinates and calculate the bounding box
+    coords = np.array(roi_info['coordinates'][0])
+    min_x, min_y = coords.min(axis=0)
+    max_x, max_y = coords.max(axis=0)
+    
+    # Format the coordinates into the desired bounding box format
+    bbx = [min_x, min_y, max_x, max_y]
+    
+    return bbx
+
+
+
 
 def identify_clouds_big_bbx(cloud_bbx, dates, year,crs, maxclouds=0.5):
     """
@@ -661,7 +692,7 @@ def download_sentinel_1_composite(cloud_bbx, year,crs):
     roi = ee.Geometry.Point([cloud_bbx[0], cloud_bbx[1]]).transform(crs,0.001)
     roi = roi.buffer(320*10).bounds().transform(crs,0.001)
 
-    months = ee.List.sequence(1,12,1)
+    months = ee.List.sequence(1,12,3)
 	
     start = ee.Date.fromYMD(year,1,1)
     end	 = ee.Date.fromYMD(year,12,31)
@@ -677,20 +708,23 @@ def download_sentinel_1_composite(cloud_bbx, year,crs):
     
     # Function to create a median composite for a given month
     def get_monthly_median(month):
-        start_month = ee.Date.fromYMD(year, month, 1).advance(-12,"days")
-        end_month = start_month.advance(1, 'month').advance(12,"days")
+        start_month = ee.Date.fromYMD(year, month, 1)
+        end_month = start_month.advance(3, 'month')
         monthly_composite = s1.filterDate(start_month, end_month).median()
         return monthly_composite.set('month', month)
 
     # Create monthly median composites
     monthly_composites = ee.ImageCollection(months.map(lambda m: get_monthly_median(ee.Number(m))).flatten())   
     
-    patchsize = 320
-    patch = get_patch(monthly_composites.toBands(), roi, patchsize,20,crs)
+    patchsize = 160
+    patch = get_patch(monthly_composites.toBands(), roi, patchsize,40,crs)
     s1img = structured_to_unstructured(patch)
+    
+    print("myshape",s1img.shape)
+  
 
     num_bands = 2
-    nSteps = 12
+    nSteps = 4
     new_shape = (nSteps, patchsize, patchsize, num_bands)
     result = np.empty(new_shape)
 
@@ -700,8 +734,13 @@ def download_sentinel_1_composite(cloud_bbx, year,crs):
             result[i, :, :, j] = s1img[:, :, i * num_bands + j]
     
     s1img = result.clip(0,1) 
-    
-    s1img  = s1img.repeat(2, axis=1).repeat(2, axis=2)
+    print("myshape",s1img.shape)
+    #s1img  = s1img.repeat(2, axis=1).repeat(4, axis=2)
+    s1img  = s1img.repeat(12 // s1img.shape[0], axis=0)
+    s1img  =  s1img.repeat(4, axis=1).repeat(4, axis=2)
+    print("new shape",s1img.shape)
+    #exit()
+   
     
     dates = get_mid_month_julian_days(year)
 

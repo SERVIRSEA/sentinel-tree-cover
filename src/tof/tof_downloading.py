@@ -3,9 +3,9 @@ import sys
 sys.path.append('../')
 from src.preprocessing.slope import calcSlope
 from src.downloading.utils import calculate_and_save_best_images
-from sentinelhub import WmsRequest, WcsRequest, MimeType, CRS, BBox, constants, DataCollection, CustomUrlParam, SentinelHubRequest
-from sentinelhub.geo_utils import bbox_to_dimensions
-from sentinelhub.api import ogc
+#from sentinelhub import WmsRequest, WcsRequest, MimeType, CRS, BBox, constants, DataCollection, CustomUrlParam, SentinelHubRequest
+#from sentinelhub.geo_utils import bbox_to_dimensions
+#from sentinelhub.api import ogc
 from typing import Tuple, List
 import numpy as np
 import datetime
